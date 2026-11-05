@@ -52,6 +52,44 @@ main.py                     Script de prueba
 tests/                      Tests con pytest
 ```
 
+## Flujo del programa
+
+```mermaid
+flowchart TD
+    A["python main.py [proveedor]"] --> B["load_dotenv(): lee el archivo .env"]
+    B --> C["AsyncLLMManager.from_env()"]
+    C --> D{"¿Proveedor válido<br/>con API key y modelo?"}
+    D -- No --> E["Configuration error<br/>(fin del programa)"]
+    D -- Sí --> F["ModelConfig (Pydantic)<br/>valida temperatura 0-2 y max_tokens"]
+    F --> G{"CLIENTS[provider]"}
+    G -- openai --> H["OpenAIClient<br/>(AsyncOpenAI)"]
+    G -- anthropic --> I["AnthropicClient<br/>(AsyncAnthropic)"]
+    H --> J
+    I --> J
+
+    subgraph NORMAL ["1) Modo normal: manager.generate()"]
+        J["client.generate(mensajes)"] --> K{"¿Salió bien?"}
+        K -- Sí --> L["ModelResponse con content"]
+        K -- "No (LLMClientError)" --> M{"¿Error temporal?<br/>(rate limit / red)"}
+        M -- "Sí y quedan intentos" --> N["Espera 1s, 2s, 4s...<br/>(backoff exponencial)"]
+        N --> J
+        M -- "No o sin intentos" --> O["ModelResponse con error"]
+    end
+
+    L --> P
+    O --> P
+
+    subgraph STREAM ["2) Modo streaming: manager.stream()"]
+        P["client.stream(mensajes)"] --> Q["yield StreamChunk(text)<br/>por cada fragmento"]
+        Q --> R{"¿Falló a mitad?"}
+        R -- No --> S["Texto completo impreso"]
+        R -- Sí --> T["Último StreamChunk con error<br/>(sin reintento)"]
+    end
+
+    S --> U["manager.close(): cierra las conexiones"]
+    T --> U
+```
+
 **Cómo funciona:**
 
 1. `BaseLLMClient` define el contrato: `generate()`, `stream()` y `close()`.
