@@ -1,7 +1,7 @@
 """AsyncLLMManager: chooses the provider and handles errors.
-
-The app only talks to the manager. Its methods never raise: if something
-fails, the error comes inside the response.
+AsyncLLMManager: elige el proveedor y maneja los errores. La app solo habla
+con el manager, y sus métodos nunca lanzan excepciones: si algo falla, el
+error viene dentro de la respuesta.
 """
 
 import asyncio
@@ -11,27 +11,31 @@ from collections.abc import AsyncIterator
 from clients import AnthropicClient, BaseLLMClient, LLMClientError, OpenAIClient
 from schemas import ChatMessage, LLMError, ModelConfig, ModelResponse, StreamChunk
 
-# To add a provider: create its client and add it here.
+# Registro de proveedores. Para agregar uno: crear su cliente y sumarlo acá.
 CLIENTS: dict[str, type[BaseLLMClient]] = {
     "openai": OpenAIClient,
     "anthropic": AnthropicClient,
 }
 
 
+# Entry point of the app: picks the client by provider and never lets errors escape.
+# Punto de entrada de la app: elige el cliente según el proveedor y nunca deja escapar errores.
 class AsyncLLMManager:
+    # Create the client for the configured provider (or use the given one, e.g. in tests).
+    # Crea el cliente del proveedor configurado (o usa el que se le pasa, ej. en los tests).
     def __init__(self, config: ModelConfig, client: BaseLLMClient | None = None) -> None:
         self.config = config
-        # `client` lets the tests use a fake client.
         self.client = client or CLIENTS[config.provider](config)
 
+    # Build the manager from the environment variables (.env).
+    # Arma el manager a partir de las variables de entorno (.env).
     @classmethod
     def from_env(cls, provider: str | None = None) -> "AsyncLLMManager":
-        """Create the manager from the environment variables (.env)."""
         provider = provider or os.getenv("LLM_PROVIDER", "openai")
         if provider not in CLIENTS:
             raise ValueError(f"Unknown provider '{provider}'. Use: {', '.join(CLIENTS)}")
 
-        prefix = provider.upper()  # OPENAI_... or ANTHROPIC_...
+        prefix = provider.upper()  # OPENAI_... o ANTHROPIC_...
         api_key = os.getenv(f"{prefix}_API_KEY")
         model = os.getenv(f"{prefix}_MODEL")
         if not api_key or not model:
@@ -48,32 +52,29 @@ class AsyncLLMManager:
         )
         return cls(config)
 
+    # Return the full answer, retrying temporary errors (rate limit, network) after 1s, 2s, 4s...
+    # Devuelve la respuesta completa; reintenta errores temporales (rate limit, red) tras 1s, 2s, 4s...
     async def generate(self, messages: list[ChatMessage]) -> ModelResponse:
-        """Return the answer. If it fails, retry the temporary errors
-        (rate limit, network) waiting 1s, 2s, 4s... between attempts."""
         for attempt in range(self.config.max_retries + 1):
             try:
                 return await self.client.generate(messages)
             except LLMClientError as e:
                 error = e.error
-            except Exception as e:  # any other error: never crash the program
+            except Exception as e:  # cualquier otro error: nunca cortar el programa
                 error = LLMError(type="unknown", message=str(e))
 
             is_last_attempt = attempt == self.config.max_retries
             if not error.retryable or is_last_attempt:
                 break
-            wait = 2**attempt
+            wait = 2**attempt  # espera exponencial: 1s, 2s, 4s...
             print(f"[retry] {error.type} error, retrying in {wait}s...")
             await asyncio.sleep(wait)
 
         return ModelResponse(provider=self.config.provider, model=self.config.model, error=error)
 
+    # Yield text as it arrives; on failure the last chunk carries the error (no retry, to avoid repeated text).
+    # Devuelve el texto a medida que llega; si falla, el último chunk trae el error (sin reintento, para no repetir texto).
     async def stream(self, messages: list[ChatMessage]) -> AsyncIterator[StreamChunk]:
-        """Yield the text as it arrives. If it fails, the last chunk has the error.
-
-        The stream is not retried: if it fails halfway, retrying would
-        repeat the text the user already saw.
-        """
         try:
             async for text in self.client.stream(messages):
                 yield StreamChunk(text=text)
@@ -82,5 +83,7 @@ class AsyncLLMManager:
         except Exception as e:
             yield StreamChunk(error=LLMError(type="unknown", message=str(e)))
 
+    # Close the connections of the underlying client.
+    # Cierra las conexiones del cliente que se está usando.
     async def close(self) -> None:
         await self.client.close()
