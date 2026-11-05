@@ -52,43 +52,97 @@ main.py                     Script de prueba
 tests/                      Tests con pytest
 ```
 
-## Flujo del programa
+## Cómo funciona
+
+Así viaja una pregunta desde `main.py` hasta la API del proveedor y vuelve como respuesta (o como error controlado).
 
 ```mermaid
 flowchart TD
-    A["python main.py [proveedor]"] --> B["load_dotenv(): lee el archivo .env"]
-    B --> C["AsyncLLMManager.from_env()"]
-    C --> D{"¿Proveedor válido<br/>con API key y modelo?"}
-    D -- No --> E["Configuration error<br/>(fin del programa)"]
-    D -- Sí --> F["ModelConfig (Pydantic)<br/>valida temperatura 0-2 y max_tokens"]
-    F --> G{"CLIENTS[provider]"}
-    G -- openai --> H["OpenAIClient<br/>(AsyncOpenAI)"]
-    G -- anthropic --> I["AnthropicClient<br/>(AsyncAnthropic)"]
-    H --> J
-    I --> J
-
-    subgraph NORMAL ["1) Modo normal: manager.generate()"]
-        J["client.generate(mensajes)"] --> K{"¿Salió bien?"}
-        K -- Sí --> L["ModelResponse con content"]
-        K -- "No (LLMClientError)" --> M{"¿Error temporal?<br/>(rate limit / red)"}
-        M -- "Sí y quedan intentos" --> N["Espera 1s, 2s, 4s...<br/>(backoff exponencial)"]
-        N --> J
-        M -- "No o sin intentos" --> O["ModelResponse con error"]
+    subgraph CONFIG["1. Configuración"]
+        direction LR
+        A[/".env<br/>LLM_PROVIDER + API keys"/]
+        B["schemas.py<br/>Pydantic valida la config"]
     end
 
-    L --> P
-    O --> P
-
-    subgraph STREAM ["2) Modo streaming: manager.stream()"]
-        P["client.stream(mensajes)"] --> Q["yield StreamChunk(text)<br/>por cada fragmento"]
-        Q --> R{"¿Falló a mitad?"}
-        R -- No --> S["Texto completo impreso"]
-        R -- Sí --> T["Último StreamChunk con error<br/>(sin reintento)"]
+    subgraph APP["2. Script de prueba"]
+        C["main.py<br/>¿Qué es la entropía?"]
     end
 
-    S --> U["manager.close(): cierra las conexiones"]
-    T --> U
+    subgraph MANAGER["3. AsyncLLMManager"]
+        D["from_env()<br/>elige el cliente según LLM_PROVIDER"]
+        E["generate()<br/>modo normal + reintentos 1s, 2s, 4s"]
+        F["stream()<br/>modo streaming, yield por fragmento"]
+    end
+
+    subgraph CLIENTES["4. Clientes (contrato BaseLLMClient)"]
+        direction LR
+        G["OpenAIClient<br/>AsyncOpenAI"]
+        H["AnthropicClient<br/>AsyncAnthropic"]
+    end
+
+    subgraph APIS["5. APIs externas"]
+        direction LR
+        I(["API de OpenAI"])
+        J(["API de Anthropic"])
+    end
+
+    subgraph TESTS["6. Tests"]
+        T["pytest<br/>15 tests sin API keys"]
+    end
+
+    K(["Resultado<br/>respuesta o error controlado"])
+
+    A -->|load_dotenv| C
+    B -.->|valida| D
+    C --> D
+    C -->|1. modo normal| E
+    C -->|2. modo streaming| F
+    D -->|openai| G
+    D -->|anthropic| H
+    E --> CLIENTES
+    F --> CLIENTES
+    G -->|await| I
+    H -->|await| J
+    E ==>|nunca crash| K
+    F ==>|nunca crash| K
+    T -.->|prueba| MANAGER
+
+    classDef config fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef app fill:#fce7f3,stroke:#db2777,color:#831843
+    classDef manager fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef clientes fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef apis fill:#cffafe,stroke:#0891b2,color:#164e63
+    classDef tests fill:#f3e8ff,stroke:#9333ea,color:#581c87
+    classDef resultado fill:#f1f5f9,stroke:#334155,color:#0f172a
+
+    class A,B config
+    class C app
+    class D,E,F manager
+    class G,H clientes
+    class I,J apis
+    class T tests
+    class K resultado
+
+    style CONFIG fill:#eff6ff,stroke:#2563eb,color:#1e3a8a
+    style APP fill:#fdf2f8,stroke:#db2777,color:#831843
+    style MANAGER fill:#fffbeb,stroke:#d97706,color:#78350f
+    style CLIENTES fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    style APIS fill:#ecfeff,stroke:#0891b2,color:#164e63
+    style TESTS fill:#faf5ff,stroke:#9333ea,color:#581c87
 ```
+
+### Qué hace cada parte
+
+| Parte | Qué hace |
+|---|---|
+| **1. Configuración** (azul) | El `.env` dice qué proveedor usar y guarda las API keys. `schemas.py` valida con Pydantic que la config sea correcta (temperatura 0-2, `max_tokens` > 0). |
+| **2. Script de prueba** (rosa) | `main.py` carga el `.env` y hace la pregunta en modo normal y en modo streaming. |
+| **3. AsyncLLMManager** (amarillo) | Elige el cliente según `LLM_PROVIDER`. `generate()` reintenta los errores temporales; `stream()` devuelve el texto fragmento por fragmento. |
+| **4. Clientes** (verde) | `OpenAIClient` y `AnthropicClient` cumplen el mismo contrato (`BaseLLMClient`) y usan los SDKs asíncronos oficiales. |
+| **5. APIs externas** (celeste) | Las llamadas se hacen con `await`, así no se bloquea el programa mientras el modelo responde. |
+| **6. Tests** (violeta) | `pytest` prueba el manager y los esquemas con un cliente falso, sin API keys. |
+
+La flecha gruesa marca la regla principal: pase lo que pase, el manager devuelve una respuesta o un error controlado, nunca un crash.
 
 **Cómo funciona:**
 
