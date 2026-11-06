@@ -87,7 +87,7 @@ flowchart TD
     end
 
     subgraph TESTS["6. Tests"]
-        T["pytest<br/>15 tests sin API keys"]
+        T["pytest<br/>17 tests sin API keys"]
     end
 
     K(["Resultado<br/>respuesta o error controlado"])
