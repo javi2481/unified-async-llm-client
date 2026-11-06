@@ -195,7 +195,27 @@ else:
     print(response.content)
 ```
 
-Estos dos casos están cubiertos por los tests `test_retries_rate_limit_and_then_succeeds` y `test_returns_error_when_retries_run_out`.
+Estos dos casos están cubiertos por los tests `test_retries_rate_limit_and_then_succeeds` y `test_returns_error_when_retries_run_out`. La secuencia de esperas (1s y después 2s) la verifica `test_backoff_waits_grow_exponentially`.
+
+### Ejemplo: qué pasa si no hay conexión
+
+Salida real de `python main.py` apuntando a un servidor que no responde (`OPENAI_BASE_URL=http://127.0.0.1:1`):
+
+```text
+Provider: openai | Model: gpt-5.4-mini
+Question: ¿Qué es la entropía?
+
+=== Normal mode ===
+[retry] connection error, retrying in 1s...
+[retry] connection error, retrying in 2s...
+[error] connection: Could not reach the API
+
+=== Streaming mode ===
+
+[error] connection: Could not reach the API
+```
+
+En modo normal se reintenta dos veces y después se muestra el error. En streaming no se reintenta. En ningún caso el programa se corta con un traceback.
 
 ## Tests
 

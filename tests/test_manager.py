@@ -76,6 +76,20 @@ async def test_returns_error_when_retries_run_out() -> None:
     assert client.calls == 3  # primer intento + 2 reintentos
 
 
+# The waits between retries grow exponentially: 1s and then 2s.
+# Las esperas entre reintentos crecen de forma exponencial: 1s y después 2s.
+async def test_backoff_waits_grow_exponentially(monkeypatch) -> None:
+    waits = []
+
+    async def record_sleep(seconds):  # anota la espera en lugar de esperar de verdad
+        waits.append(seconds)
+
+    monkeypatch.setattr("manager.asyncio.sleep", record_sleep)
+    client = FakeClient([RATE_LIMIT, RATE_LIMIT, "ok"])
+    await AsyncLLMManager(CONFIG, client).generate(MESSAGES)
+    assert waits == [1, 2]
+
+
 # An invalid API key is not retried: retrying would not fix it.
 # Una API key inválida no se reintenta: reintentar no lo soluciona.
 async def test_does_not_retry_invalid_api_key() -> None:

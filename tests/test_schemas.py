@@ -44,6 +44,13 @@ def test_api_key_is_hidden() -> None:
     assert "sk-secret" not in str(config)
 
 
+# A message with empty content is rejected (min_length=1).
+# Un mensaje con contenido vacío se rechaza (min_length=1).
+def test_empty_message_content_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ChatMessage(role="user", content="")
+
+
 # A message with a role other than system/user/assistant is rejected.
 # Un mensaje con un role distinto de system/user/assistant se rechaza.
 def test_invalid_role_is_rejected() -> None:
