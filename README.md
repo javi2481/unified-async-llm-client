@@ -165,6 +165,38 @@ Los reintentos esperan 1s, 2s, 4s... entre intentos (backoff exponencial). Los S
 
 El **streaming no se reintenta**: si falla a mitad de la respuesta, reintentar repetiría el texto que ya se mostró. El error llega como último fragmento.
 
+### Ejemplo: qué pasa ante un rate limit
+
+Con `LLM_MAX_RETRIES=2`, el manager hace hasta 3 intentos (el primero + 2 reintentos).
+
+**Caso 1: el proveedor se recupera.** Los dos primeros intentos devuelven 429 y el tercero funciona:
+
+```text
+[retry] rate_limit error, retrying in 1s...
+[retry] rate_limit error, retrying in 2s...
+content: La entropía es... | error: None
+```
+
+**Caso 2: el rate limit no se resuelve.** Los tres intentos fallan. El programa no se corta: la respuesta vuelve vacía y con el error dentro.
+
+```text
+[retry] rate_limit error, retrying in 1s...
+[retry] rate_limit error, retrying in 2s...
+content: '' | error: type='rate_limit' message='429' retryable=True
+```
+
+Desde el código de la app se revisa así:
+
+```python
+response = await llm.generate(messages)
+if response.error:
+    print(f"No se pudo responder: {response.error.type}")
+else:
+    print(response.content)
+```
+
+Estos dos casos están cubiertos por los tests `test_retries_rate_limit_and_then_succeeds` y `test_returns_error_when_retries_run_out`.
+
 ## Tests
 
 ```bash
